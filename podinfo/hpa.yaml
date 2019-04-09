@@ -3,17 +3,38 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: podinfo
   namespace: test
+  annotations:
+    metric-config.object.istio-requests-total.prometheus/per-replica: "true"
+    metric-config.object.istio-requests-total.prometheus/query: |
+      sum(
+        rate(
+          istio_requests_total{
+            destination_workload="podinfo",
+            destination_workload_namespace="test"
+          }[1m]
+        )
+      ) /
+      count(
+        count(
+          container_memory_usage_bytes{
+            namespace="test",
+            pod_name=~"podinfo.*"
+          }
+        ) by (pod_name)
+      )
 spec:
+  maxReplicas: 10
+  minReplicas: 1
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: podinfo
-  minReplicas: 2
-  maxReplicas: 4
   metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      # scale up if usage is above
-      # 99% of the requested CPU (100m)
-      targetAverageUtilization: 99
+    - type: Object
+      object:
+        metricName: istio-requests-total
+        target:
+          apiVersion: v1
+          kind: Pod
+          name: podinfo
+        targetValue: 10
