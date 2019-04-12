@@ -3,25 +3,6 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: podinfo
   namespace: test
-  annotations:
-    metric-config.object.istio-requests-total.prometheus/per-replica: "true"
-    metric-config.object.istio-requests-total.prometheus/query: |
-      sum(
-        rate(
-          istio_requests_total{
-            destination_workload="podinfo",
-            destination_workload_namespace="test"
-          }[1m]
-        )
-      ) /
-      count(
-        count(
-          container_memory_usage_bytes{
-            namespace="test",
-            pod_name=~"podinfo.*"
-          }
-        ) by (pod_name)
-      )
 spec:
   maxReplicas: 10
   minReplicas: 1
@@ -32,9 +13,9 @@ spec:
   metrics:
     - type: Object
       object:
-        metricName: istio-requests-total
+        metricName: requests_per_second_podinfo
         target:
           apiVersion: v1
-          kind: Pod
+          kind: Service
           name: podinfo
         targetValue: 10
