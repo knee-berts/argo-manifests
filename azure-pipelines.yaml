@@ -6,4 +6,4 @@ steps:
   displayName: 'publish manifest to folder as an artifact'
   inputs:
     artifactName: 'manifests'
-    pathToPublish: '/'
+    pathToPublish: ''
