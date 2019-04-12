@@ -17,5 +17,5 @@ spec:
         target:
           apiVersion: v1
           kind: Service
-          name: podinfo
+          name: podinfo-canary
         targetValue: 10
