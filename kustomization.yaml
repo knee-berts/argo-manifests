@@ -1,0 +1,5 @@
+bases:
+- podinfo
+patchesStrategicMerge:
+- patch.yaml
+namePrefix: production-

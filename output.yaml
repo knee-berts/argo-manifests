@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: flagger-loadtester
+  name: production-flagger-loadtester
+spec:
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http
+  selector:
+    app: flagger-loadtester
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: podinfo
+  name: production-podinfo
+  namespace: test
+spec:
+  minReadySeconds: 5
+  progressDeadlineSeconds: 60
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app: podinfo
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+      labels:
+        app: podinfo
+    spec:
+      containers:
+      - command:
+        - ./podinfo
+        - --port=9898
+        - --level=info
+        - --random-delay=false
+        - --random-error=false
+        env:
+        - name: PODINFO_UI_COLOR
+          value: blue
+        image: quay.io/stefanprodan/podinfo:1.4.1
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - podcli
+            - check
+            - http
+            - localhost:9898/healthz
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+        name: podinfod
+        ports:
+        - containerPort: 9898
+          name: http
+          protocol: TCP
+        readinessProbe:
+          exec:
+            command:
+            - podcli
+            - check
+            - http
+            - localhost:9898/readyz
+          initialDelaySeconds: 5
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: flagger-loadtester
+  name: production-flagger-loadtester
+spec:
+  selector:
+    matchLabels:
+      app: flagger-loadtester
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+      labels:
+        app: flagger-loadtester
+    spec:
+      containers:
+      - command:
+        - ./loadtester
+        - -port=8080
+        - -log-level=info
+        - -timeout=1h
+        image: quay.io/stefanprodan/flagger-loadtester:0.2.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          exec:
+            command:
+            - wget
+            - --quiet
+            - --tries=1
+            - --timeout=4
+            - --spider
+            - http://localhost:8080/healthz
+          timeoutSeconds: 5
+        name: loadtester
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          exec:
+            command:
+            - wget
+            - --quiet
+            - --tries=1
+            - --timeout=4
+            - --spider
+            - http://localhost:8080/healthz
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+          requests:
+            cpu: 10m
+            memory: 32Mi
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsUser: 10001
+---
+apiVersion: autoscaling/v2beta1
+kind: HorizontalPodAutoscaler
+metadata:
+  name: production-podinfo
+  namespace: test
+spec:
+  maxReplicas: 10
+  metrics:
+  - object:
+      metricName: requests_per_second_podinfo
+      target:
+        apiVersion: v1
+        kind: Service
+        name: podinfo-canary
+      targetValue: 10
+    type: Object
+  minReplicas: 1
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: production-podinfo
+---
+apiVersion: flagger.app/v1alpha3
+kind: Canary
+metadata:
+  name: production-podinfo
+  namespace: test
+spec:
+  autoscalerRef:
+    apiVersion: autoscaling/v2beta1
+    kind: HorizontalPodAutoscaler
+    name: podinfo
+  canaryAnalysis:
+    interval: 1m
+    maxWeight: 50
+    metrics:
+    - interval: 1m
+      name: istio_requests_total
+      threshold: 99
+    - interval: 30s
+      name: istio_request_duration_seconds_bucket
+      threshold: 500
+    stepWeight: 10
+    threshold: 5
+    webhooks:
+    - metadata:
+        cmd: hey -z 1m -q 10 -c 2 http://podinfo.test:9898/
+      name: load-test
+      timeout: 5s
+      url: http://flagger-loadtester.test/
+  progressDeadlineSeconds: 60
+  service:
+    gateways:
+    - public-gateway.istio-system.svc.cluster.local
+    hosts:
+    - app.nicksgreatideas.com
+    port: 9898
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: podinfo
